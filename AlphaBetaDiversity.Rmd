@@ -1,0 +1,869 @@
+---
+title: "Alpha and Beta Diversity Analysis Tutorial"
+author: "by Clifton P. Bueno de Mesquita, PhD and Nicholas B. Dragone, PhD"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-03-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Fierer Lab, University of Colorado Boulder
+### Versions:
+#### Version 1: October 2nd 2020 (presented by Cliff to CU Boulder CME)
+#### Version 2: May 26, 2023 (presented by Nick in New Zealand)
+#### Version 3: March 19, 2024 (shared publicly to GitHub, shared with CU grad students)
+### This tutorial will cover mctoolsR and some commonly used alpha and beta diversity statistics and plotting. You can do many of the same things with the phyloseq package. We use mctoolsR mainly because it was designed by a former student in the Fierer Lab (Jon Leff) and our dada2 pipeline is set up to export into the format required.
+
+# Setup
+## Note the code below uses the example dataset from mctoolsR (https://github.com/leffj/mctoolsr). We will note where you can change the inputs and code to use your own data instead
+
+```{r}
+# R packages required for this tutorial
+suppressMessages(library(mctoolsr)) # For inputting, rarefying, filtering, taxonomic analyses
+suppressMessages(library(plyr)) # For hulls
+suppressMessages(library(tidyverse)) # For data manipulation and plotting
+suppressMessages(library(RColorBrewer)) # For color palettes
+suppressMessages(library(vegan)) # For alpha and beta diversity analyses
+suppressMessages(library(indicspecies)) # For indicator species
+suppressMessages(library(car)) # For Levene Test and ANOVA
+suppressMessages(library(PMCMRplus)) # For Nemenyi posthoc test
+suppressMessages(library(ggh4x)) # For nested facet plots
+suppressMessages(library(emmeans)) # For pairwise comparisons
+suppressMessages(library(multcomp)) # For automated significant difference letters
+suppressMessages(library(zCompositions)) # CLR
+suppressMessages(library(compositions)) # Aitchison
+suppressMessages(library(reshape2)) # For melting
+suppressMessages(library(cowplot)) # For plotting
+
+# If you haven't already installed these packages before, you will need to install them with:
+# install.packages()
+
+# For Installing mctoolsR the first time, use:
+# install.packages("devtools")
+# devtools::install_github("leffj/mctoolsr")
+
+# Custom functions
+source("cliffplot_taxa_bars.R")
+source("plot_multipatt_asv.R")
+
+```
+
+# Loading Data
+## This loads the mctoolsr example dataset.
+```{r}
+# Loading ASV Table
+tax_table_fp = system.file('extdata', 'fruits_veggies_taxa_table_wTax.biom', 
+                           package = 'mctoolsr')
+
+# Loading mapping file
+map_fp = system.file('extdata', 'fruits_veggies_metadata.txt', 
+                     package = 'mctoolsr')
+
+# To load YOUR OWN data, replace everything after the "=" with: 'PATH/TO/YOUR_ASV_TABLE_FILE.txt' <- output from dada2 pipeline
+# If your files are in your working directly, you do not need to specify the path
+
+# Combine the ASV table and mapping file into an mctoolsR object
+input = load_taxa_table(tax_table_fp, map_fp)
+
+# If this has worked correctly, you should get a note saying how many samples have been loaded. For the example dataset, this will say "32 samples loaded".
+
+```
+
+# Understanding the mctoolsR dataframe
+## The mctoolsR object is a list with 3 dataframes that can be accessed with $. The dataframes are a sequence table, a mapping file, and a taxonomic file.
+```{r}
+# Examine the input dataframes.
+head(input$data_loaded) # Rows are OTUs, columns are samples
+head(input$taxonomy_loaded) # Rows are OTUs (now ASVs), columns are different taxonomic levels
+head(input$map_loaded) # Rows are samples, columns are variables
+```
+
+# Initial data examinination - reads per sample
+## One of the first things we want to do is see how many sequences per sample there are.
+```{r}
+# This is done by getting the column sums of the sequence table, and we'll sort it too.
+sort(colSums(input$data_loaded))
+
+# We could also save this as an object and plot it
+seqcounts <- as.data.frame(sort(colSums(input$data_loaded)))
+
+# This puts the sample names as row names and the sequence counts column is titled "sort(colSums(input$data_loaded)))
+# We'll use the pipeline %>% which is very useful for dataframe management with the dplyr package
+# We'll rename the column and make a new column all at once
+seqcounts <- as.data.frame(sort(colSums(input$data_loaded))) %>%
+  rename("seqs" = "sort(colSums(input$data_loaded))") %>%
+  rownames_to_column(var = "sampleID")
+
+# Now we have a better dataframe with two columns, seqs and sampleID which we can plot
+ggplot(seqcounts, aes(reorder(sampleID, seqs, mean), seqs)) + # Dataframe and variables
+  geom_bar(stat = "identity") + # Type of graph
+  labs(y = "# Reads", x = "Sample") + # Axes labels
+  coord_flip() + # Flip axes
+  theme_classic() + # Plot style. I also use theme_bw() a lot.
+  theme(axis.text.y = element_text(size = 10)) # Tweak things about text and legend in theme()
+```
+
+# Filtering data
+## We often filter out anything not assigned to a phylum and any control samples. You may also want to do analyses on only a subset of your data, or remove contaminant ASVs that are found in the PCR or extraction blanks. For 16S, at the least filter out mitochondrial, chloroplast, eukaryote DNA, and things unassigned at phylum level. Depending on your samples and analysis goals, you should also consider filtering out extremely rare amplicon sequence variants. Here we will demonstrate removal of what are called "singletons" and "doubletons", which are individual amplicon sequence variants that only appear once or twice, respectively, in the whole dataset. This is generally recommended.
+```{r}
+# Copy the dataset before doing any filtering
+input_filt <- input
+
+# For all filtering steps, taxa removed will be output, make note of this for methods section. Also sometimes it will say "Taxa not found" if it is not found. That is an error and the dataset will not be altered. The search is case sensitive.
+
+# This filters out any ASVs from input dataframe ("input_filt") not assigned to a phylum (at taxonomy level 2 = "NA") 
+input_filt <- filter_taxa_from_input(input_filt, 
+                                     at_spec_level = 2, 
+                                     taxa_to_remove = "unclassified") # 978
+
+# New versions call it NA
+#input_filt <- filter_taxa_from_input(input_filt, at_spec_level = 2, taxa_to_remove = "NA")
+
+# Filtering out mitochondria sequences from the filtered input dataset.
+input_filt <- filter_taxa_from_input(input_filt, 
+                                     taxa_to_remove = "f__mitochondria") # 14 
+
+# New versions call it Mitochondria
+#input_filt <- filter_taxa_from_input(input_filt, taxa_to_remove = "Mitochondria")
+
+# Filtering out chloroplast sequences
+input_filt <- filter_taxa_from_input(input_filt, 
+                                     taxa_to_remove = "c__Chloroplast") # 1
+
+# New versions call it Chloroplast
+#input_filt <- filter_taxa_from_input(input_filt, taxa_to_remove = "Chloroplast")  
+
+# Filtering out Eukaryotes
+#input_filt <- filter_taxa_from_input(input_filt, taxa_to_remove = "Eukaryota") # 0
+
+# If you want to filter out multiple groups at the same time, you can also do that like this:
+# input_filt <- filter_taxa_from_input(input_filt, 
+#                                      taxa_to_remove = c("Chloroplast",
+#                                                         "Mitochondria",
+#                                                         "Eukaryota"))
+# However, it's interesting to do it individually to see how much of each DNA category there was!
+
+# Filtering out singletons and doubletons
+# First we'll save the ASV IDs of ASVs with less than 3 total counts
+singdoub <- data.frame("count" = rowSums(input_filt$data_loaded)) %>%
+  filter(count < 3) %>%
+  mutate(ASV = rownames(.))
+
+# Now we'll provide that list of ASV IDs to the taxa_IDs_to_remove argument
+input_filt <- filter_taxa_from_input(input_filt,
+                                     taxa_IDs_to_remove = singdoub$ASV)
+
+# NOTE: Each line you run updates the input_filt dataset, so be careful, if something goes wrong go back to the start of filtering.
+
+# NOTE: Databases update and sometimes change how Chloroplast, mitochondria, Eukaryotes are named. If you find that you have not filtered anything, search in the taxa table to make sure that you have the right notation. You can do View(input_filt$taxonomy_loaded) and do a quick search.
+
+# NOTE: You can also use taxa_to_keep, specify the taxonomic level with at_spec_level, remove or keep individual ASVs with taxa_IDs_to_keep or taxa_IDs_to_remove, or filter at an abundance threshold.
+
+# In addition to taxonomic filtering, you can filter out samples. For example, let's filter out lettuce samples. We can give a variable name and levels of the variable to filter or keep.
+input_filt <- filter_data(input_filt, # provide input_filt again. careful! 
+                          filter_cat = "Sample_type",
+                          filter_vals = "Lettuce") # 28 samples remaining (removed 4)
+
+# Note: normally after you've filtered and rarefied it's recommended to save the dataset as a .rds file. This ensures you use the same dataset and analysis is reproducible (because rarefaction involves random sampling). Then, if you quit your session but want to reanalyze something, you could just start by reading in your .rds files.
+
+# Lets save the filtered but unrarefied dataset.
+saveRDS(input_filt, file = "input_filt.rds")
+
+# You can read it in like this:
+input_filt <- readRDS("input_filt.rds")
+```
+
+# Rarefying data
+## Moving on, let's rarefy the data at the lowest count per sample. Sometimes you may want to drop samples and choose a higher number. Rarefaction is one of many ways to normalize data across samples. It has been criticized because you end up throwing away reads. McMurdie and Holmes (2014) argued strongly against it, but the method has since held up to scrutiny (e.g., Weiss et al. 2017 Microbiome, Schloss 2024 mSphere).
+```{r}
+# Let's recheck the reads per sample now that we've filtered out a lot of crap.
+sort(colSums(input_filt$data_loaded))
+
+# Rarefy at 949 seqs/sample
+set.seed(600) # Set a seed to make this reproducible, although you can also just write to disk and reload the file.
+input_filt_rar = single_rarefy(input_filt, 949) # This makes a new mctoolsR dataset called input_filt_rar
+# The number of samples remaining is stated. Any samples below the threshold get dropped.
+
+# Check seq counts in new dataset
+colSums(input_filt_rar$data_loaded) # Good - all 949! It worked.
+
+# Save the file. You can reload it with readRDS().
+saveRDS(input_filt_rar, file = "input_filt_rar.rds")
+input_filt_rar <- readRDS("input_filt_rar.rds")
+```
+
+# ALPHA DIVERSITY
+## ASV richness and Shannon diversity. Let's analyze and graph the number of OTUs (now ASVs) and the Shannon diversity across the sample types.
+```{r}
+# First let's get the number of ASVs (richness) per sample and add it to the mapping file
+input_filt_rar$map_loaded$rich <- specnumber(input_filt_rar$data_loaded, 
+                                             MARGIN = 2)
+
+# Now let's get the Shannon diversity index and add it to the mapping file
+# Note: Shannon diversity takes into account the ASV richness, as well as evenness
+input_filt_rar$map_loaded$shannon <- diversity(input_filt_rar$data_loaded, 
+                                               index = "shannon", 
+                                               MARGIN = 2)
+
+# Note: since the data_loaded file has ASVs as rows, MARGIN must be set to 2.
+```
+
+## Two categories: t-test (parametric) or Wilcoxon Test (non-parametric)
+```{r}
+# Two categories example
+leveneTest(input_filt_rar$map_loaded$rich ~ input_filt_rar$map_loaded$Farm_type)
+# Variance homogeneous (p > 0.05)
+
+shapiro.test(input_filt_rar$map_loaded$rich)
+# Richness normally distributed (p > 0.05)
+
+t.test(input_filt_rar$map_loaded$rich ~ input_filt_rar$map_loaded$Farm_type)
+# No significant difference in richness among the two categories
+
+# If Levene's Test or Shapiro-Wilk Test p < 0.05, use Wilcoxon Test
+wilcox.test(input_filt_rar$map_loaded$rich ~ input_filt_rar$map_loaded$Farm_type)
+# Same result
+
+# Box and whisker plot with points
+ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(size = 3, alpha = 0.5) +
+  labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+# Box and whisker plot with jittered points (geom_jitter instead of geom_point)
+ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+# Don't need legend because each category is already clearly labeled
+ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        legend.position = "none")
+
+# Change colors to be colorblind friendly (e.g., red and blue is better than red and green)
+ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
+  scale_colour_manual(values = c("red", "blue")) +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        legend.position = "none")
+
+# Save plot. This specifies a size and makes it reproducible. pdf default dimensions are in inches. could also use png or jpeg or ggsave. The file will go into working directory unless you specify a different path.
+pdf(file = "FarmType.pdf", width = 4, height = 4) 
+ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
+  scale_colour_manual(values = c("red", "blue")) +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        legend.position = "none")
+dev.off()
+
+# Now let's plot Shannon diversity. I cut and pasted the above plot and changed the y input and axis label
+ggplot(input_filt_rar$map_loaded, aes(Farm_type, shannon, colour = Farm_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  labs(x = "Farm Type", y = "Shannon diversity", colour = "Farm Type") +
+  scale_colour_manual(values = c("red", "blue")) +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        legend.position = "none")
+
+```
+
+## Three + categores: ANOVA (parametric) or Kruskal-Wallis (non-parametric)
+```{r}
+# Three category example
+leveneTest(input_filt_rar$map_loaded$rich ~ input_filt_rar$map_loaded$Sample_type)
+# Variance homogeneous (p > 0.05)
+
+m <- aov(input_filt_rar$map_loaded$rich ~ input_filt_rar$map_loaded$Sample_type)
+shapiro.test(m$residuals)
+# Residuals normally distributed (p > 0.05)
+# Note: Here we test the assumption that the residuals (not the data itself) are normally distributed
+
+# Other diagnostics - learn more here (https://data.library.virginia.edu/diagnostic-plots/)
+# Note: R markdown will plot all 4 diagnostic plots. If not in R markdown, click in the console and hit Return to see each diagnostic plot.
+plot(m) 
+
+# Check the model results.
+summary(m)
+
+# Significant effect. Run posthoc test to see which groups are different from each other.
+# Mushrooms different from spinach and strawberries. No diff between spinach and strawberries
+TukeyHSD(m)
+
+# If Levene's Test or Shapiro-Wilk Test p < 0.05, use Krukal-Wallis Test
+# Note: The Nemenyi test only accepts a factor independent variable so we add as.factor() to the independent variable.
+kruskal.test(input_filt_rar$map_loaded$rich ~ input_filt_rar$map_loaded$Sample_type)
+
+# Significant effect. (agrees with ANOVA). Run posthoc.
+kwAllPairsNemenyiTest(input_filt_rar$map_loaded$rich ~ as.factor(input_filt_rar$map_loaded$Sample_type))
+# Similar result, but spinach/mushroom different now only marginal. 
+# Use ANOVA result if assumptions passed because there is more power and data aren't rank transformed, which is a loss of information.
+
+# Plot. Just copy the previous plot, change the variable name and the colour argument! 
+# Here we'll try the viridis palette.
+ggplot(input_filt_rar$map_loaded, aes(Sample_type, rich, colour = Sample_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  labs(x = "Sample Type", y = "ASV Richness", colour = "Farm Type") +
+  scale_colour_viridis_d() +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        legend.position = "none")
+
+# Now, since there was a significant difference, let's add some letter text. We'll make a new dataframe containing coordinates for the letters. Groups with different letters are significantly different. So it should be a b b. We set y to 180 to be above the maximum ASV richness.
+label_df <- data.frame(x = c("Mushrooms", "Spinach", "Strawberries"),
+                       y = c(180, 180, 180),
+                       label = c("a", "b", "b"))
+
+# Plot with added geom_text 
+ggplot(input_filt_rar$map_loaded, aes(Sample_type, rich, colour = Sample_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  geom_text(data = label_df, aes(x, y, label = label), size = 5, inherit.aes = F) +
+  labs(x = "Sample Type", y = "ASV Richness", colour = "Farm Type") +
+  scale_colour_viridis_d() +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        legend.position = "none")
+```
+
+# Multipanel plot.
+## What one might want to show as, say, Figure 1 in a paper for a nice overview of the microbial communities, could be a multipanel plot with both ASV richness and Shannon diversity. 
+# Let's use an automated method for generating the significant difference letters, and then "melt" the data into long format for multipanel plotting
+```{r}
+## Stats for rich and Shannon using ANOVA and emmeans and cld.
+m1 <- aov(rich ~ Sample_type, data = input_filt_rar$map_loaded)
+t1 <- emmeans(object = m1, specs = "Sample_type") %>%
+  cld(object = ., adjust = "Tukey", Letters = letters, alpha = 0.05) %>%
+  mutate(name = "rich",
+         y = 180)
+
+m2 <- aov(shannon ~ Sample_type, data = input_filt_rar$map_loaded)
+t2 <- emmeans(object = m2, specs = "Sample_type") %>%
+  cld(object = ., adjust = "Tukey", Letters = letters, alpha = 0.05) %>%
+  mutate(name = "shannon",
+         y = 5)
+
+# Note: The sidak note is fine. It's still a Tukey posthoc test, just with sidak adjustment.
+
+# Combine the labels
+label_df <- rbind(t1, t2)
+
+# Set names for the facet strips
+facet_df <- c("rich" = "(a) Richness",
+              "shannon" = "(b) Shannon")
+
+# Make the data long format
+alpha_long <- input_filt_rar$map_loaded %>%
+  pivot_longer(cols = c("rich", "shannon"))
+# This will put the richness and Shannon values into a column named "value"
+# It will make a new column ("name") which maps the values to either richness or shannon
+
+# Plot using facet_wrap to make the two panels. We use scales = "free_y" to let the y-axis scale vary among the two panels.
+ggplot(alpha_long, aes(Sample_type, value, colour = Sample_type)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 3, alpha = 0.5) +
+  geom_text(data = label_df, 
+            aes(Sample_type, y, label = str_trim(.group)), 
+            size = 5, inherit.aes = F) +
+  labs(x = "Sample Type", y = "ASV Richness", colour = "Farm Type") +
+  scale_colour_viridis_d() +
+  facet_wrap(~name, ncol = 2, scales = "free_y", labeller = as_labeller(facet_df)) +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 18),
+        legend.position = "none")
+
+```
+
+# BETA DIVERSITY
+### Now let's assess differences in entire community composition among sample types. We will calculate Aitchison and Bray-Curtis dissimilarity, plot ordinations, and run multivariate stats. The conventional method has long been to calculate a Bray-Curtis dissimilarity matrix and then plot a PCoA or NMDS. We will first do these and then go over a newer method that is now preferred by many (e.g., Gloor et al. 2017 Frontiers in Microbiology).
+
+## Bray-Curtis and NMDS
+```{r}
+# Calculate dissimilarity matrix
+dm <- calc_dm(input_filt_rar$data_loaded)
+# NOTE: calc_dm uses Bray-Curtis by default. Can change to others using method=type_of_function in the script
+
+# Let's calculate an ordination from the distance matrix
+ord <- calc_ordination(dm, 'nmds')
+# NOTE: You can also run pcoa and others by changing the code above from NMDS
+
+# Now plot the ordination using the default mctoolsR function.
+plot_ordination(input_filt_rar, ord, 'Sample_type', 'Farm_type', hulls = TRUE)
+#this is a nice thing to do at the start of an analysis to see what your data is doing
+
+# NOTE: plot_ordination is a good way to quickly plot data. However, if you want to do more complicated edits to a plot, you should save the ordination values from the calc_ordination() step as a dataframe and plot in ggplot as shown below.
+```
+
+## Bray-Curtis and PCoA
+### This does basically the same thing as above, but it uses Principle Coordinates Analysis (PCoA) instead of Non-metric multidimensional scaling (NMDS). It is worth seeing that you can do basically the same thing using two different codes and is a good check of the consistency of the ordination. We also demonstrate saving the ordination scores and making a custom ggplot figure rather than relying on the default mctoolsR function.
+```{r}
+# Bray-Curtis dissimilarity matrix. Note: By default the data are square-root transformed.
+bc <- calc_dm(input_filt_rar$data_loaded)
+
+# Principle Coordinates Analysis (PCoA)
+pcoa <- cmdscale(bc, k = nrow(input_filt_rar$map_loaded) - 1, eig = T)
+
+# Variation Explained
+eigenvals(pcoa)/sum(eigenvals(pcoa)) # 23.3, 16.6 % variation explained
+
+# Make axis labels with % variation explained rounded to 1 digit.
+pcoaA1 <- paste("PC1: ", round((eigenvals(pcoa)/sum(eigenvals(pcoa)))[1]*100, 1), "%")
+pcoaA2 <- paste("PC2: ", round((eigenvals(pcoa)/sum(eigenvals(pcoa)))[2]*100, 1), "%") 
+
+# Save Axis 1 and 2 scores to the mapping file
+input_filt_rar$map_loaded$Axis01 <- scores(pcoa)[,1]
+input_filt_rar$map_loaded$Axis02 <- scores(pcoa)[,2]
+
+# Function for making a convex hull
+find_hull <- function(df) df[chull(df$Axis01, df$Axis02),]
+
+# Calculate hulls and save to dataframe
+micro.hulls <- ddply(input_filt_rar$map_loaded, c("Sample_type", "Farm_type"), find_hull)
+
+# Plot
+ggplot(input_filt_rar$map_loaded, aes(Axis01, Axis02, colour = Sample_type, shape = Farm_type)) +
+  geom_polygon(data = micro.hulls, aes(colour = Sample_type, fill = Sample_type),
+               alpha = 0.1, show.legend = F) +
+  geom_point(size = 2, alpha = 0.5) +
+  labs(x = pcoaA1, 
+       y = pcoaA2,
+       colour = "Food",
+       shape = "Farm") +
+  scale_colour_viridis_d() +
+  scale_fill_viridis_d() +
+  theme_bw() +  
+  theme(legend.position = "right",
+        axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+```
+
+## Aitchison Matrix and PCA
+### Some authors (e.g., Gloor et al. 2017) have argued for using Aitchison's distance instead of Bray-Curtis dissimilarity. Then, a PCA instead of PCoA is performed. Instead of using rarefied data, we will use our unrarefied (but filtered) dataset and perform a center log ratio transformation.
+```{r}
+# First perform zero replacement and center log ratio (CLR) transformation. Use filtered but unrarefied data for this ("input_filt").
+otu_czm <- cmultRepl(t(input_filt$data_loaded), label = 0, method = "CZM")
+otu_clr <- clr(otu_czm)
+aclr <- compositions::dist(otu_clr)
+
+# Filter dropped samples
+# Columns and rows containing more than 80% zeros/unobserved values were deleted
+# This is the bad thing about this method. We have now lost some samples and ASVs.
+# You can also avoid this by adjusting the z.warning.
+# Here we just proceed with the default.
+dim(t(input_filt$data_loaded)) # 28 samples, 933 ASVs
+dim(otu_czm) # 23 samples, 144 ASVs
+
+# Make a sampleID column
+input_filt$map_loaded$sampleID <- rownames(input_filt$map_loaded)
+
+# Filter out sampleIDs not in the CLR dataset. Save as new mctoolsR object.
+input_filt_clr <- filter_data(input_filt,
+                              filter_cat = "sampleID",
+                              keep_vals = rownames(otu_czm))
+
+# PCA (principle components analysis)
+d.pcx <- prcomp(aclr)
+
+# % variation explained
+d.mvar <- sum(d.pcx$sdev^2)
+
+# Make axes labels with % variation explained
+PC1 <- paste("PC1: ", round((sum(d.pcx$sdev[1]^2)/d.mvar)*100, 1), "%")
+PC2 <- paste("PC2: ", round((sum(d.pcx$sdev[2]^2)/d.mvar)*100, 1), "%")
+
+# Save scores to map_loaded dataframe
+input_filt_clr$map_loaded$Axis01 <- d.pcx$x[,1]
+input_filt_clr$map_loaded$Axis02 <- d.pcx$x[,2]
+
+# Transform the scores
+input_filt_clr$map_loaded$Axis01 <- input_filt_clr$map_loaded$Axis01/sqrt(sum((input_filt_clr$map_loaded$Axis01 - mean(input_filt_clr$map_loaded$Axis01))^2))
+input_filt_clr$map_loaded$Axis02 <- input_filt_clr$map_loaded$Axis02/sqrt(sum((input_filt_clr$map_loaded$Axis02 - mean(input_filt_clr$map_loaded$Axis02))^2))
+
+# Calculate hulls
+micro.hulls <- ddply(input_filt_clr$map_loaded, c("Sample_type", "Farm_type"), find_hull)
+
+# Plot
+ggplot(input_filt_clr$map_loaded, aes(Axis01, Axis02, colour = Sample_type, shape = Farm_type)) +
+  geom_polygon(data = micro.hulls, aes(colour = Sample_type, fill = Sample_type),
+               alpha = 0.1, show.legend = F) +
+  geom_point(size = 2, alpha = 0.5) +
+  labs(x = PC1, 
+       y = PC1,
+       colour = "Food",
+       shape = "Farm") +
+  scale_colour_viridis_d() +
+  scale_fill_viridis_d() +
+  theme_bw() +  
+  theme(legend.position = "right",
+        axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+# Note: This is very consistent with the Bray-Curtis and PCoA.
+```
+
+## PERMANOVA, PERMDISP
+### Now we need to run some statisitcs to test for differences in community composition among treatments as well as homogeneity of dispersion within treatments.
+```{r}
+# PERMANOVA (multivariate version of ANOVA)
+set.seed(1223) # To make reproducible 
+m <- adonis2(bc ~ input_filt_rar$map_loaded$Sample_type*input_filt_rar$map_loaded$Farm_type)
+m
+# Significant effects of sample type, farm type and interaction.
+
+# PERMDISP (multivariate version of Levene's Test)
+m1 <- betadisper(bc, input_filt_rar$map_loaded$Sample_type)
+anova(m1) # Dispersion different
+m2 <- betadisper(bc, input_filt_rar$map_loaded$Farm_type)
+anova(m2) # Dispersion homogeneous
+m3 <- betadisper(bc, input_filt_rar$map_loaded$Sample_Farming)
+anova(m3) # Dispersion different
+
+# Let's add the centroids to our PCoA plot.
+# Centroids are contained here:
+m3$centroids
+
+# First make a clean data frame with %>%
+centroids <- as.data.frame(m3$centroids) %>%
+  dplyr::select(PCoA1, PCoA2) %>%
+  rename(Axis01 = PCoA1,
+         Axis02 = PCoA2) %>%
+  rownames_to_column(var = "Sample_Farming") %>%
+  separate(Sample_Farming, into = c("Sample_type", "Farm_type"), sep = "_")
+
+# Remake the hulls
+micro.hulls <- ddply(input_filt_rar$map_loaded, c("Sample_type", "Farm_type"), find_hull)
+
+# Plot
+ggplot(input_filt_rar$map_loaded, aes(Axis01, Axis02, colour = Sample_type, shape = Farm_type)) +
+  geom_polygon(data = micro.hulls, aes(colour = Sample_type, fill = Sample_type),
+               alpha = 0.1, show.legend = F) +
+  geom_point(size = 2, alpha = 0.5) +
+  geom_point(data = centroids, size = 4) +
+  labs(x = pcoaA1, 
+       y = pcoaA2,
+       colour = "Food",
+       shape = "Farm") +
+  scale_colour_viridis_d() +
+  scale_fill_viridis_d() +
+  theme_bw() +  
+  theme(legend.position = "right",
+        axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+```
+
+## Multipanel PCoA plots
+### As a bonus, let's make a multipanel PCoA plot. This can be really useful if you have a 16S dataset and an 18S or ITS dataset, and you want to show both side by side. In this case, let's just make another PCoA with the same dataset. Let's just use the original unfiltered unrarefied dataset. This will also show us how filtering and rarefying affected the analysis. Let's remove lettuce though so the factor levels are the same.
+```{r}
+# Bray-Curtis Matrix
+input_nolet <- filter_data(input,
+                           filter_cat = "Sample_type",
+                           filter_vals = "Lettuce") # 28 samples remaining (removed 4)
+bc2 <- calc_dm(input_nolet$data_loaded)
+
+# Principle Coordinates Analysis (PCoA)
+pcoa2 <- cmdscale(bc2, k = nrow(input_nolet$map_loaded) - 1, eig = T)
+
+# Variation Explained
+eigenvals(pcoa2)/sum(eigenvals(pcoa2)) # 18.0, 13.9 % variation explained
+
+# Save Axis 1 and 2 to the mapping file
+input_nolet$map_loaded$Axis01 <- scores(pcoa2)[,1]
+input_nolet$map_loaded$Axis02 <- scores(pcoa2)[,2]
+
+# Now we need to combine the two datasets. We'll stack them on top of each other with rbind. In order to do this, the columns must match. Right now we have an extra columns in input_filt_rar$map_loaded (e.g., rich and shannon). To be sure let's just select the columns we need from each and then stack. We also need to add a column stating the dataset - we'll use this as a variable to specify the panels.
+df1 <- input_filt_rar$map_loaded %>%
+  dplyr::select(Sample_type, Farm_type, Sample_Farming, Axis01, Axis02) %>%
+  mutate(Dataset = "a) Rarefied, filtered")
+df2 <- input_nolet$map_loaded %>%
+  dplyr::select(Sample_type, Farm_type, Sample_Farming, Axis01, Axis02) %>%
+  mutate(Dataset = "b) Unrarefied, unfiltered")
+df3 <- rbind(df1, df2)
+
+# Now we'll make a label data frame for the % variation explained. To get the right x and y values, check the range of axes values. You can also plot, adjust, and replot.
+range(df1$Axis01)
+range(df2$Axis01)
+range(df1$Axis02)
+range(df2$Axis02)
+label_df2 <- data.frame(x = c(-0.35, -0.35),
+                        y = c(-0.35, -0.35),
+                        Dataset = c("a) Rarefied, filtered", "b) Unrarefied, unfiltered"),
+                        label = c("23.3%, 16.6%", "18.0%, 13.9%"))
+
+# Now we need to make new hulls. The hulls will be the same as before but we'll add Dataset as a variable. 
+micro.hulls2 <- ddply(df3, c("Dataset","Sample_type","Farm_type"), find_hull)
+ggplot(df3, aes(Axis01, Axis02, colour = Sample_type, shape = Farm_type)) +
+  geom_polygon(data = micro.hulls2, aes(colour = Sample_type, fill = Sample_type),
+               alpha = 0.1, show.legend = F) +
+  geom_point(size = 2, alpha = 0.5) +
+  geom_text(data = label_df2, aes(x, y, label = label), size = 3, inherit.aes = F) +
+  labs(x = "PC1", 
+       y = "PC2",
+       colour = "Food",
+       shape = "Farm") +
+  scale_colour_viridis_d() +
+  scale_fill_viridis_d() +
+  facet_wrap(~ Dataset) + # We did not define a scales argument, so axes have the same scales
+  theme_bw() +  
+  theme(legend.position = "right",
+        axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 12))
+# The overall trends are the same but there were some minor shifts. Also the rarefied/filtered dataset gets more % variation explained by the first 2 axes.
+```
+
+## Hierarchical Clustering
+### Another option to examine community composition among your samples and treatments is to see how they cluster. You can already see how they cluster in the ordination plots, but this is another method that can be used.
+```{r}
+# Cluster according to Ward's D2. There are other methods available.
+# The input is a dissimilarity matrix. Here we'll use the Bray-Curtis one.
+h <- hclust(bc)
+
+# The default plot of the saved hclust object will immediately give you an overview of how the samples cluster. 
+# There are ways to clean up these plots and make them pretty and color by treatments but that won't be covered here.
+plot(h)
+```
+
+# TAXONOMIC ANALYSIS
+## Indicator Taxa
+### Let's first check for indicator taxa for our grouping variables. We will try two methods, SIMPER and MULTIPATT. SIMPER will list how much each ASV contributes to dissimilarity among groups. MULTIPATT will list indicators for each individual group as well as combinations of groups. These methods use a large amount of computer memory and can sometimes take a while or max out your computer, depending on the dataset size. It will run faster/better on a server or if you just run it on the most abundant taxa instead of tens of thousands of ASVs. In this case, this is a simple dataset and we won't have any problems.
+```{r}
+# SIMPER (list how much each ASV contributes to dissimilarity among groups)
+sim <- simper(t(input_filt_rar$data_loaded), 
+              input_filt_rar$map_loaded$Sample_type)
+s <- summary(sim)
+# Let's look at the top 5 contributing to dissimilarity between mushrooms and strawberries/spinach
+head(s$Mushrooms_Strawberries, n = 5)
+head(s$Mushrooms_Spinach, n = 5)
+# average is the proportion contribution, cumsum is cumulative, ava and avb are mean sequence abundances per group.
+# in this case it looks like the top 5 ASVs are expalining a lot of the difference (~40%)
+
+# MULTIPATT (list ASVs associated with each group)
+# Groups can be individual treatments or groups of treatments
+set.seed(1223) # For reproducability
+mp <- multipatt(t(input_filt_rar$data_loaded), 
+                input_filt_rar$map_loaded$Sample_type, 
+                func = "IndVal.g", 
+                control = how(nperm=999))
+summary(mp)
+
+# Now lets use a custom function for plotting just 1 group indicators and choosing p value and indicator value cutoffs.
+# Rerun the multipatt with the r.g func.
+set.seed(1223) # For reproducibility
+mp <- multipatt(t(input_filt_rar$data_loaded), 
+                input_filt_rar$map_loaded$Sample_type, 
+                func = "r.g", 
+                control = how(nperm=999))
+
+# This function was built with an 8th taxonomy column containing the ASV ID. Make here.
+input_filt_rar$taxonomy_loaded$taxonomy8 <- rownames(input_filt_rar$taxonomy_loaded)
+
+# It takes a summarized taxonomy dataframe, made like this.
+tax_sum_asv <- summarize_taxonomy(input_filt_rar, level = 8, report_higher_tax = FALSE)
+
+# The group must be a factor
+input_filt_rar$map_loaded$Sample_type <- as.factor(input_filt_rar$map_loaded$Sample_type) 
+
+# Run the function.
+plot_multipatt_asv(mp_obj = mp, 
+                   input = input_filt_rar,
+                   tax_sum = tax_sum_asv,
+                   group = "Sample_type",
+                   filter = FALSE,
+                   abund = "% Rel. Abund.",
+                   qcut = 0.05, # Adjusted p value< 0.05
+                   rcut = 0.5) # Can change r cutoff to be more or less selective
+
+# This will plot the ASVs that passed the cutoffs. It will plot how correlated they are with a group as well as their % relative abundance. It will state the phylum and ASV ID.
+```
+
+## OTU/ASV Specific functions
+```{r}
+# Let's look at the top taxa across samples (Can change the number you want seen)
+return_top_taxa(input = input_filt_rar, number_taxa = 10)
+# Calculates the top taxa based on number of counts - taking the row means for each OTU
+
+# What taxa are common? Give them rarefied input, then level = "what level we want to summarize our information for". Check input_filt_rar$taxonomy_loaded for the levels. level 2 is phylum level
+tax_sum_phyla <- summarize_taxonomy(input_filt_rar, level = 2, report_higher_tax = FALSE)
+#level taxa=false- just look at that level, not at whole taxonomic classification
+
+# How many phyla can we detect in this dataset
+tax_sum_phyla
+
+# Give most abundant phyla across dataset
+tax_sum_phyla_Means <- sort(rowMeans(tax_sum_phyla), decreasing = T)
+tax_sum_phyla_Means[1:5]
+
+# Now lets try summarizing at the family level (level 5)
+tax_sum_families <- summarize_taxonomy(input_filt_rar, level = 5, report_higher_tax = FALSE)
+head(tax_sum_families)
+```
+
+## Other useful plotting and analysis functions
+### Base mctoolsR has some other nice functions for running statistical tests on taxonomic abundances as well as plotting heatmaps and stacked bar plots. We also demonstrate some customizations on the base functions. For more information on mctoolsR functions, see the tutorial at https://github.com/leffj/mctoolsr.
+```{r}
+# Summarize at family level. Choose different levels with the level argument
+tax_sum_families <- summarize_taxonomy(input_filt_rar, level = 5, report_higher_tax = FALSE)
+
+# Default heatmap
+plot_ts_heatmap(tax_sum_families, 
+                input_filt_rar$map_loaded, 
+                0.01, 
+                'Sample_type')
+
+# Add some customization
+plot_ts_heatmap(tax_sum_families, 
+                input_filt_rar$map_loaded, 
+                0.01, 
+                'Sample_type',
+                rev_taxa = T) +
+  coord_flip() +
+  theme(axis.text.x = element_text(size = 12, angle = 45, vjust = 1))
+
+# Default (choose how many taxa you want with num_taxa)
+plot_taxa_bars(tax_sum_families,
+               input_filt_rar$map_loaded,
+               "Sample_type",
+               num_taxa = 10)
+
+# Add some customization
+plot_taxa_bars(tax_sum_families,
+               input_filt_rar$map_loaded,
+               "Sample_type",
+               num_taxa = 10) +
+  labs(x = "Sample Type", y = "Relative Abundance", fill = "Family") +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+# Add even more customization. plot_taxa_bars has a data_only argument. So you can save the dataset created and then write your own plot!
+bars <- plot_taxa_bars(tax_sum_families,
+                       input_filt_rar$map_loaded,
+                       "Sample_type",
+                       num_taxa = 10,
+                       data_only = TRUE)
+ggplot(bars, aes(group_by, mean_value, fill = taxon)) +
+  geom_bar(stat = "identity", colour = "black", linewidth = 0.25) +
+  labs(x = "Sample Type", y = "Relative Abundance", fill = "Family") +
+  scale_fill_brewer(palette = "Paired") +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+# Different style - classic theme, no black lines between taxa.
+ggplot(bars, aes(group_by, mean_value, fill = taxon)) +
+  geom_bar(stat = "identity", linewidth = 0.25) +
+  labs(x = "Sample Type", y = "Relative Abundance", fill = "Family") +
+  scale_fill_brewer(palette = "Paired") +
+  theme_classic() +
+  theme(axis.title = element_text(face = "bold", size = 16), 
+        axis.text = element_text(size = 14))
+
+# Now try a cliffplot! This is a custom function by Cliff Bueno de Mesquita that serves as a nice but quick overview of the top taxa at different levels. The function is in the GitHub repository and was imported with the source() function in the setup portion of this tutorial. You can ignore the warnings, which have to do with whether or not unclassified taxa were in the top 12 of a particular taxonomic level. It was also made with a SILVA version that writes Unclassified instead of unclassified.
+cliffplot_taxa_bars(input = input_filt_rar, level = 1, variable = "Sample_type")
+cliffplot_taxa_bars(input = input_filt_rar, level = 2, variable = "Sample_type")
+cliffplot_taxa_bars(input = input_filt_rar, level = 3, variable = "Sample_type")
+cliffplot_taxa_bars(input = input_filt_rar, level = 4, variable = "Sample_type")
+cliffplot_taxa_bars(input = input_filt_rar, level = 5, variable = "Sample_type")
+cliffplot_taxa_bars(input = input_filt_rar, level = 6, variable = "Sample_type")
+cliffplot_taxa_bars(input = input_filt_rar, level = 7, variable = "Sample_type")
+cliffplot_taxa_bars(input = input_filt_rar, level = 8, variable = "Sample_type")
+
+# Add even more customization. Try a nested facet! These are great for parsing your taxonomy plot by different grouping variables. Set the sampleID as the grouping variable so a bar is made for each sample. Utilize the nested facets to show the differences among the actual grouping variables.
+
+# Make sampleID column
+input_filt_rar$map_loaded$sampleID <- rownames(input_filt_rar$map_loaded)
+
+# Summarize taxonomy. Let's do families.
+tax_sum_families <- summarize_taxonomy(input_filt_rar, level = 5, report_higher_tax = FALSE)
+
+# Get the plotting data. We'll also join the rest of map_loaded.
+bars <- plot_taxa_bars(tax_sum_families,
+                       input_filt_rar$map_loaded,
+                       "sampleID",
+                       num_taxa = 12,
+                       data_only = TRUE) %>%
+  mutate(taxon = fct_rev(taxon)) %>%
+  left_join(., input_filt_rar$map_loaded, by = c("group_by" = "sampleID"))
+
+# Run stats and add an asterisk to their name in the legend if significantly affected by treatment
+fam_stats <- taxa_summary_by_sample_type(tax_sum_families, 
+                                         input_filt_rar$map_loaded, 
+                                         type_header = 'Sample_type', 
+                                         filter_level = 0.01, 
+                                         test_type = 'KW') %>%
+  filter(rownames(.) %in% bars$taxon) %>%
+  arrange(desc(rownames(.))) %>%
+  mutate(Sig = ifelse(pvalsFDR < 0.05, "Pfdr < 0.05", "Pfdr > 0.05")) %>%
+  mutate(Star = ifelse(pvalsFDR < 0.05, "*", "")) %>%
+  rownames_to_column(var = "taxon") %>%
+  arrange(match(taxon, levels(bars$taxon))) %>%
+  mutate(StarLab = paste(taxon, Star, sep = " "))
+
+# Plot
+ggplot(bars, aes(group_by, mean_value, fill = taxon)) +
+  geom_bar(stat = "identity", linewidth = 0.25) +
+  labs(x = "Sample Type", y = "Relative Abundance", fill = "Family") +
+  scale_fill_manual(values = c("grey90", brewer.pal(12, "Paired")[12:1]),
+                    labels = c("Other", fam_stats$StarLab)) +
+  scale_y_continuous(expand = c(0.01, 0.01)) + 
+  facet_nested(~ Farm_type + Sample_type, space = "free", scales = "free_x") +
+  theme_classic() +
+  theme(axis.title.y = element_text(face = "bold", size = 12),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
+        axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        strip.text = element_text(size = 6),
+        strip.background = element_rect(linewidth = 0.2),
+        axis.line.y = element_blank(),
+        legend.margin = margin(0, 0, 0, 0, unit = "pt"),
+        legend.box.margin = margin(0, 0, 0, 0, unit = "pt"),
+        legend.key.size = unit(0.3, "cm"),
+        panel.spacing.x = unit(c(0.2, 0.2, 0.4, 0.2, 0.2), "lines"))
+
+# Test (run a Kruskal-Wallis test on all families with mean rel abund. > filter_level in at least one of the factor levels)
+taxa_summary_by_sample_type(tax_sum_families, 
+                            input_filt_rar$map_loaded, 
+                            type_header = 'Sample_type', 
+                            filter_level = 0.05, 
+                            test_type = 'KW')
+# Or Wilcoxon for 2 levels (farm type)
+taxa_summary_by_sample_type(tax_sum_families, 
+                            input_filt_rar$map_loaded, 
+                            type_header = 'Farm_type', 
+                            filter_level = 0.05, 
+                            test_type = 'MW')
+```
