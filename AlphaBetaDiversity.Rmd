@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ### Versions:
 #### Version 1: October 2nd 2020 (presented by Cliff to CU Boulder CME)
 #### Version 2: May 26, 2023 (presented by Nick in New Zealand)
-#### Version 3: March 19, 2024 (shared publicly to GitHub, shared with CU grad students)
+#### Version 3: March 19, 2024 (shared to GitHub, shared with CU grad students)
 ### This tutorial will cover mctoolsR and some commonly used alpha and beta diversity statistics and plotting. You can do many of the same things with the phyloseq package. We use mctoolsR mainly because it was designed by a former student in the Fierer Lab (Jon Leff) and our dada2 pipeline is set up to export into the format required.
 
 # Setup
