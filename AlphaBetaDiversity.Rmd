@@ -18,6 +18,8 @@ knitr::opts_chunk$set(echo = TRUE)
 #### Version 3: March 19, 2024 (shared to GitHub, shared with CU grad students)
 ### This tutorial will cover mctoolsR and some commonly used alpha and beta diversity statistics and plotting. You can do many of the same things with the phyloseq package. We use mctoolsR mainly because it was designed by a former student in the Fierer Lab (Jon Leff) and our dada2 pipeline is set up to export into the format required.
 
+### This tutorial was written with R 4.2.3, mctoolsR 0.1.1.9, and dplyr 1.1.3. 
+
 # Setup
 ## Note the code below uses the example dataset from mctoolsR (https://github.com/leffj/mctoolsr). We will note where you can change the inputs and code to use your own data instead
 
@@ -38,6 +40,10 @@ suppressMessages(library(zCompositions)) # CLR
 suppressMessages(library(compositions)) # Aitchison
 suppressMessages(library(reshape2)) # For melting
 suppressMessages(library(cowplot)) # For plotting
+
+# Note: This tutorial was run with dplyr 1.1.3. If you are using a newer version of dplyr, you may need to install and load this version using:
+#install.packages("dplyr", version='1.1.3')
+#library(dplyr)
 
 # If you haven't already installed these packages before, you will need to install them with:
 # install.packages()
@@ -540,6 +546,13 @@ set.seed(1223) # To make reproducible
 m <- adonis2(bc ~ input_filt_rar$map_loaded$Sample_type*input_filt_rar$map_loaded$Farm_type)
 m
 # Significant effects of sample type, farm type and interaction.
+
+# What about pairwise PERMANOVA? This is similar to a Tukey posthoc an an ANOVA.
+# Grouping variable must be a factor
+input_filt_rar$map_loaded$Sample_type <- as.factor(input_filt_rar$map_loaded$Sample_type)
+set.seed(1223)
+m_pw <- calc_pairwise_permanovas(bc, input_filt_rar$map_loaded, "Sample_type")
+m_pw # Each group is significantly different from the other.
 
 # PERMDISP (multivariate version of Levene's Test)
 m1 <- betadisper(bc, input_filt_rar$map_loaded$Sample_type)
