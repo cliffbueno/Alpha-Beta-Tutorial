@@ -4,7 +4,7 @@ author: "by Clifton P. Bueno de Mesquita, PhD and Nicholas B. Dragone, PhD"
 output:
   html_document: default
   pdf_document: default
-date: "2024-03-19"
+date: "2024-03-26"
 ---
 
 ```{r setup, include=FALSE}
@@ -15,10 +15,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ### Versions:
 #### Version 1: October 2nd 2020 (presented by Cliff to CU Boulder CME)
 #### Version 2: May 26, 2023 (presented by Nick in New Zealand)
-#### Version 3: March 19, 2024 (shared to GitHub, shared with CU grad students)
+#### Version 3: March 26, 2024 (shared to GitHub, shared with CU grad students)
 ### This tutorial will cover mctoolsR and some commonly used alpha and beta diversity statistics and plotting. You can do many of the same things with the phyloseq package. We use mctoolsR mainly because it was designed by a former student in the Fierer Lab (Jon Leff) and our dada2 pipeline is set up to export into the format required.
 
-### This tutorial was written with R 4.2.3, mctoolsR 0.1.1.9, and dplyr 1.1.3. 
+### This tutorial was written with R 4.2.3, mctoolsR 0.1.1.9, and dplyr 1.1.3.
+### It has been tested and is working with R 4.2.3 and R 4.3.3
 
 # Setup
 ## Note the code below uses the example dataset from mctoolsR (https://github.com/leffj/mctoolsr). We will note where you can change the inputs and code to use your own data instead
@@ -184,7 +185,7 @@ input_filt <- readRDS("input_filt.rds")
 ```
 
 # Rarefying data
-## Moving on, let's rarefy the data at the lowest count per sample. Sometimes you may want to drop samples and choose a higher number. Rarefaction is one of many ways to normalize data across samples. It has been criticized because you end up throwing away reads. McMurdie and Holmes (2014) argued strongly against it, but the method has since held up to scrutiny (e.g., Weiss et al. 2017 Microbiome, Schloss 2024 mSphere).
+## Moving on, let's rarefy the data at the lowest count per sample. Sometimes you may want to drop samples and choose a higher number. Rarefaction is one of many ways to normalize data across samples. It has been criticized because you end up throwing away reads. McMurdie and Holmes (2014, PLOS Computational Biology, https://doi.org/10.1371/journal.pcbi.1003531) argued strongly against it, but the method has since held up to scrutiny (e.g., Weiss et al. 2017 Microbiome https://doi.org/10.1186/s40168-017-0237-y, Schloss 2024 mSphere https://doi.org/10.1128/msphere.00354-23).
 ```{r}
 # Let's recheck the reads per sample now that we've filtered out a lot of crap.
 sort(colSums(input_filt$data_loaded))
@@ -411,7 +412,7 @@ ggplot(alpha_long, aes(Sample_type, value, colour = Sample_type)) +
 ```
 
 # BETA DIVERSITY
-### Now let's assess differences in entire community composition among sample types. We will calculate Aitchison and Bray-Curtis dissimilarity, plot ordinations, and run multivariate stats. The conventional method has long been to calculate a Bray-Curtis dissimilarity matrix and then plot a PCoA or NMDS. We will first do these and then go over a newer method that is now preferred by many (e.g., Gloor et al. 2017 Frontiers in Microbiology).
+### Now let's assess differences in entire community composition among sample types. We will calculate Aitchison and Bray-Curtis dissimilarity, plot ordinations, and run multivariate stats. The conventional method has long been to calculate a Bray-Curtis dissimilarity matrix and then plot a PCoA or NMDS. We will first do these and then go over a newer method that is now preferred by many (e.g., Gloor et al. 2017 Frontiers in Microbiology https://doi.org/10.3389/fmicb.2017.02224).
 
 ## Bray-Curtis and NMDS
 ```{r}
@@ -732,10 +733,13 @@ tax_sum_phyla <- summarize_taxonomy(input_filt_rar, level = 2, report_higher_tax
 #level taxa=false- just look at that level, not at whole taxonomic classification
 
 # How many phyla can we detect in this dataset
-tax_sum_phyla
+nrow(tax_sum_phyla)
 
-# Give most abundant phyla across dataset
+# Check the most abundant phyla across dataset
 tax_sum_phyla_Means <- sort(rowMeans(tax_sum_phyla), decreasing = T)
+
+# This is now sorted from most abundant to least abundant, based on means across all samples
+# Check the top 5 phyla
 tax_sum_phyla_Means[1:5]
 
 # Now lets try summarizing at the family level (level 5)

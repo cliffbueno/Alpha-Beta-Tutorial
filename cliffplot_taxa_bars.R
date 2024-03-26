@@ -56,7 +56,7 @@ cliffplot_taxa_bars <- function(input, level, variable) {
                          num_taxa = 12,
                          data_only = TRUE)
   cliffplot <- ggplot(bars, aes(group_by, mean_value, fill = taxon)) +
-    geom_bar(stat = "identity", colour = NA, size = 0.25) +
+    geom_bar(stat = "identity", colour = NA, linewidth = 0.25) +
     labs(x = "Estuary", y = "Relative abundance", fill = leg_title) +
     scale_fill_manual(values = c("red", "blue")) +
     scale_y_continuous(expand = c(0.01, 0.01)) + 
@@ -75,7 +75,7 @@ cliffplot_taxa_bars <- function(input, level, variable) {
                            data_only = TRUE) %>%
       mutate(taxon = fct_rev(taxon))
     cliffplot <- ggplot(bars, aes(group_by, mean_value, fill = taxon)) +
-      geom_bar(stat = "identity", colour = NA, size = 0.25) +
+      geom_bar(stat = "identity", colour = NA, linewidth = 0.25) +
       labs(x = "Estuary", y = "Relative abundance", fill = leg_title) +
       scale_fill_manual(values = c("grey90", brewer.pal(12, "Paired")[12:1])) +
       scale_y_continuous(expand = c(0.01, 0.01)) + 
@@ -97,7 +97,7 @@ cliffplot_taxa_bars <- function(input, level, variable) {
       mutate(taxon = fct_relevel(taxon, "Unclassified", after = Inf)) %>%
       mutate(taxon = fct_rev(taxon))
     cliffplot <- ggplot(bars, aes(group_by, mean_value, fill = taxon)) +
-      geom_bar(stat = "identity", colour = NA, size = 0.25) +
+      geom_bar(stat = "identity", colour = NA, linewidth = 0.25) +
       labs(x = "Estuary", y = "Relative abundance", fill = leg_title) +
       scale_fill_manual(values = c("grey75", "grey90", brewer.pal(12, "Paired")[11:1])) +
       scale_y_continuous(expand = c(0.01, 0.01)) + 
