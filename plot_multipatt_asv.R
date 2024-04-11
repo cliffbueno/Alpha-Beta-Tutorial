@@ -1,7 +1,7 @@
 # Function to automate plotting multipatt results
 # Make plot of indicator correlation coefficients and mean abundance across all samples
 # Just for taxa indicative of one group
-# Can work for Phylum through OTU level
+# Can work for Phylum through ASV level
 # Can work for factor with up to 10 levels
 
 plot_multipatt_asv <- function(mp_obj, input, tax_sum, group, filter, filter_vals, abund, qcut, rcut) {
@@ -80,6 +80,46 @@ plot_multipatt_asv <- function(mp_obj, input, tax_sum, group, filter, filter_val
     for (i in 1:nrow(mp_obj_results)) {
       if (mp_obj_results[,10][i] == 1) {
         mp_obj_results$Group[i] <- substring(names(mp_obj$sign)[10], 3)
+      }
+    }
+  }
+  
+  if (ncol(mp_obj$sign)-3 > 10) {
+    for (i in 1:nrow(mp_obj_results)) {
+      if (mp_obj_results[,11][i] == 1) {
+        mp_obj_results$Group[i] <- substring(names(mp_obj$sign)[11], 3)
+      }
+    }
+  }
+  
+  if (ncol(mp_obj$sign)-3 > 11) {
+    for (i in 1:nrow(mp_obj_results)) {
+      if (mp_obj_results[,12][i] == 1) {
+        mp_obj_results$Group[i] <- substring(names(mp_obj$sign)[12], 3)
+      }
+    }
+  }
+  
+  if (ncol(mp_obj$sign)-3 > 12) {
+    for (i in 1:nrow(mp_obj_results)) {
+      if (mp_obj_results[,13][i] == 1) {
+        mp_obj_results$Group[i] <- substring(names(mp_obj$sign)[13], 3)
+      }
+    }
+  }
+  
+  if (ncol(mp_obj$sign)-3 > 13) {
+    for (i in 1:nrow(mp_obj_results)) {
+      if (mp_obj_results[,14][i] == 1) {
+        mp_obj_results$Group[i] <- substring(names(mp_obj$sign)[14], 3)
+      }
+    }
+  }
+  
+  if (ncol(mp_obj$sign)-3 > 14) {
+    for (i in 1:nrow(mp_obj_results)) {
+      if (mp_obj_results[,15][i] == 1) {
+        mp_obj_results$Group[i] <- substring(names(mp_obj$sign)[15], 3)
       }
     }
   }
@@ -175,7 +215,7 @@ plot_multipatt_asv <- function(mp_obj, input, tax_sum, group, filter, filter_val
   bp.y <- ggplot(data = mp_obj_results, aes(x = taxon, y = abund)) + 
     geom_bar(stat = "identity", fill = "grey") + 
     scale_y_continuous(position = "right") +
-    scale_x_discrete(limits = rev(levels(mp_obj_results$taxon))) +
+    scale_x_discrete(limits = rev(levels(hm.melted$taxon))) +
     coord_flip() + 
     theme_minimal() +
     theme(axis.title.y = element_blank(), 
@@ -191,6 +231,8 @@ plot_multipatt_asv <- function(mp_obj, input, tax_sum, group, filter, filter_val
                    rel_widths = c(0.7, 0.3), align = "h")
   plot_grid(top, input.l, nrow = 2, rel_heights = c(0.90, 0.10))
 }
+
+
 
 plot_multipatt_fungal <- function(mp_obj, input, tax_sum, group, qcut, rcut) {
   
