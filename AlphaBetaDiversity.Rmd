@@ -4,7 +4,7 @@ author: "by Clifton P. Bueno de Mesquita, PhD and Nicholas B. Dragone, PhD"
 output:
   html_document: default
   pdf_document: default
-date: "2024-03-26"
+date: "2026-10-19"
 ---
 
 ```{r setup, include=FALSE}
@@ -16,10 +16,11 @@ knitr::opts_chunk$set(echo = TRUE)
 #### Version 1: October 2nd 2020 (presented by Cliff to CU Boulder CME)
 #### Version 2: May 26, 2023 (presented by Nick in New Zealand)
 #### Version 3: March 26, 2024 (shared to GitHub, shared with CU grad students)
+#### Version 4: October 19, 2026
 ### This tutorial will cover mctoolsR and some commonly used alpha and beta diversity statistics and plotting. You can do many of the same things with the phyloseq package. We use mctoolsR mainly because it was designed by a former student in the Fierer Lab (Jon Leff) and our dada2 pipeline is set up to export into the format required.
 
 ### This tutorial was written with R 4.2.3, mctoolsR 0.1.1.9, and dplyr 1.1.3.
-### It has been tested and is working with R 4.2.3 and R 4.3.3
+### It has been tested and is working with R 4.2.3, R 4.3.3, 4.5.1
 
 # Setup
 ## Note the code below uses the example dataset from mctoolsR (https://github.com/leffj/mctoolsr). We will note where you can change the inputs and code to use your own data instead
@@ -84,7 +85,7 @@ input = load_taxa_table(tax_table_fp, map_fp)
 ## The mctoolsR object is a list with 3 dataframes that can be accessed with $. The dataframes are a sequence table, a mapping file, and a taxonomic file.
 ```{r}
 # Examine the input dataframes.
-head(input$data_loaded) # Rows are OTUs, columns are samples
+head(input$data_loaded) # Rows are OTUs (now ASVs), columns are samples
 head(input$taxonomy_loaded) # Rows are OTUs (now ASVs), columns are different taxonomic levels
 head(input$map_loaded) # Rows are samples, columns are variables
 ```
@@ -162,7 +163,7 @@ singdoub <- data.frame("count" = rowSums(input_filt$data_loaded)) %>%
 
 # Now we'll provide that list of ASV IDs to the taxa_IDs_to_remove argument
 input_filt <- filter_taxa_from_input(input_filt,
-                                     taxa_IDs_to_remove = singdoub$ASV)
+                                     taxa_IDs_to_remove = singdoub$ASV) # 2091 removed
 
 # NOTE: Each line you run updates the input_filt dataset, so be careful, if something goes wrong go back to the start of filtering.
 
@@ -189,6 +190,14 @@ input_filt <- readRDS("input_filt.rds")
 ```{r}
 # Let's recheck the reads per sample now that we've filtered out a lot of crap.
 sort(colSums(input_filt$data_loaded))
+
+# Make a rarefaction curve to check # reads vs. # OTUs
+# Also add a vertical red line at places where you might rarefy
+# Here, we add a line at 949, the minimum reads per sample
+local({
+  rarecurve(t(input_filt$data_loaded), step = 100, label = FALSE)
+  abline(v = 949, col = "red")
+})
 
 # Rarefy at 949 seqs/sample
 set.seed(600) # Set a seed to make this reproducible, although you can also just write to disk and reload the file.
@@ -247,7 +256,7 @@ ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
 # Box and whisker plot with jittered points (geom_jitter instead of geom_point)
 ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
   theme_bw() +
   theme(axis.title = element_text(face = "bold", size = 16), 
@@ -256,7 +265,7 @@ ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
 # Don't need legend because each category is already clearly labeled
 ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
   theme_bw() +
   theme(axis.title = element_text(face = "bold", size = 16), 
@@ -266,7 +275,7 @@ ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
 # Change colors to be colorblind friendly (e.g., red and blue is better than red and green)
 ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
   scale_colour_manual(values = c("red", "blue")) +
   theme_bw() +
@@ -275,22 +284,21 @@ ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
         legend.position = "none")
 
 # Save plot. This specifies a size and makes it reproducible. pdf default dimensions are in inches. could also use png or jpeg or ggsave. The file will go into working directory unless you specify a different path.
-pdf(file = "FarmType.pdf", width = 4, height = 4) 
-ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
+p <- ggplot(input_filt_rar$map_loaded, aes(Farm_type, rich, colour = Farm_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   labs(x = "Farm Type", y = "ASV Richness", colour = "Farm Type") +
   scale_colour_manual(values = c("red", "blue")) +
   theme_bw() +
   theme(axis.title = element_text(face = "bold", size = 16), 
         axis.text = element_text(size = 14),
         legend.position = "none")
-dev.off()
+ggsave("FarmType.pdf", plot = p, width = 4, height = 4)
 
 # Now let's plot Shannon diversity. I cut and pasted the above plot and changed the y input and axis label
 ggplot(input_filt_rar$map_loaded, aes(Farm_type, shannon, colour = Farm_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   labs(x = "Farm Type", y = "Shannon diversity", colour = "Farm Type") +
   scale_colour_manual(values = c("red", "blue")) +
   theme_bw() +
@@ -335,7 +343,7 @@ kwAllPairsNemenyiTest(input_filt_rar$map_loaded$rich ~ as.factor(input_filt_rar$
 # Here we'll try the viridis palette.
 ggplot(input_filt_rar$map_loaded, aes(Sample_type, rich, colour = Sample_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   labs(x = "Sample Type", y = "ASV Richness", colour = "Farm Type") +
   scale_colour_viridis_d() +
   theme_bw() +
@@ -351,7 +359,7 @@ label_df <- data.frame(x = c("Mushrooms", "Spinach", "Strawberries"),
 # Plot with added geom_text 
 ggplot(input_filt_rar$map_loaded, aes(Sample_type, rich, colour = Sample_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   geom_text(data = label_df, aes(x, y, label = label), size = 5, inherit.aes = F) +
   labs(x = "Sample Type", y = "ASV Richness", colour = "Farm Type") +
   scale_colour_viridis_d() +
@@ -396,7 +404,7 @@ alpha_long <- input_filt_rar$map_loaded %>%
 # Plot using facet_wrap to make the two panels. We use scales = "free_y" to let the y-axis scale vary among the two panels.
 ggplot(alpha_long, aes(Sample_type, value, colour = Sample_type)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(size = 3, alpha = 0.5) +
+  geom_jitter(size = 3, alpha = 0.5, width = 0.25, height = 0) +
   geom_text(data = label_df, 
             aes(Sample_type, y, label = str_trim(.group)), 
             size = 5, inherit.aes = F) +
@@ -418,7 +426,7 @@ ggplot(alpha_long, aes(Sample_type, value, colour = Sample_type)) +
 ```{r}
 # Calculate dissimilarity matrix
 dm <- calc_dm(input_filt_rar$data_loaded)
-# NOTE: calc_dm uses Bray-Curtis by default. Can change to others using method=type_of_function in the script
+# NOTE: calc_dm uses Bray-Curtis after square root transformation ("bray_sq_trans") by default. Can change to others using method=type_of_function in the script
 
 # Let's calculate an ordination from the distance matrix
 ord <- calc_ordination(dm, 'nmds')
@@ -551,9 +559,10 @@ m
 # What about pairwise PERMANOVA? This is similar to a Tukey posthoc an an ANOVA.
 # Grouping variable must be a factor
 input_filt_rar$map_loaded$Sample_type <- as.factor(input_filt_rar$map_loaded$Sample_type)
-set.seed(1223)
-m_pw <- calc_pairwise_permanovas(bc, input_filt_rar$map_loaded, "Sample_type")
-m_pw # Each group is significantly different from the other.
+# Don't run until mctoolsr updates from adonis to adonis2
+#set.seed(1223)
+#m_pw <- calc_pairwise_permanovas(bc, input_filt_rar$map_loaded, "Sample_type")
+#m_pw # Each group is significantly different from the other.
 
 # PERMDISP (multivariate version of Levene's Test)
 m1 <- betadisper(bc, input_filt_rar$map_loaded$Sample_type)
@@ -681,11 +690,11 @@ s <- summary(sim)
 head(s$Mushrooms_Strawberries, n = 5)
 head(s$Mushrooms_Spinach, n = 5)
 # average is the proportion contribution, cumsum is cumulative, ava and avb are mean sequence abundances per group.
-# in this case it looks like the top 5 ASVs are expalining a lot of the difference (~40%)
+# in this case it looks like the top 5 ASVs are explaining a lot of the difference (~40%)
 
 # MULTIPATT (list ASVs associated with each group)
 # Groups can be individual treatments or groups of treatments
-set.seed(1223) # For reproducability
+set.seed(1223) # For reproducibility
 mp <- multipatt(t(input_filt_rar$data_loaded), 
                 input_filt_rar$map_loaded$Sample_type, 
                 func = "IndVal.g", 
